@@ -1,50 +1,69 @@
 mod cli_parser;
+use spinners::{Spinner, Spinners};
 
-use rayon::prelude::*;
-use std::io::{Read, Write};
+use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::sync::mpsc::{channel, Sender};
 use std::time::Duration;
 
-fn main() {
-    let (host, port) = cli_parser::parse_cli();
+use cli_parser::ParseCliOutput;
+use tokio::task;
 
-    if port.is_some() {
-        let is_port_alive = check_if_port_is_alive(host, port.unwrap_or_default());
-        if is_port_alive.is_ok() {
-            println!("Port: {} is open", port.unwrap_or_default())
+#[tokio::main]
+async fn main() {
+    let cli_inputs: ParseCliOutput = cli_parser::parse_cli();
+    let (tx, rx) = channel();
+    let mut sp = Spinner::new(Spinners::Dots9, "🔎 Scanning ports... 🔎".into());
+
+    match cli_inputs {
+        cli_parser::ParseCliOutput::WithRange {
+            target,
+            start_port,
+            end_port,
+        } => {
+            for port in start_port..end_port {
+                let tx = tx.clone();
+
+                task::spawn(async move { scan(tx, port, target).await });
+            }
         }
-    } else {
-        let ports: Vec<u16> = (1..=3000).collect();
+        cli_parser::ParseCliOutput::WithTarget { target, port } => {
+            let tx = tx.clone();
+            scan(tx, port, target).await
+        }
+    }
 
-        let alive_ports: Vec<String> = ports
-            .par_iter()
-            .filter_map(|&port| {
-                if check_if_port_is_alive(host.clone(), port).is_ok() {
-                    Some(format!("Port: {} is open", port))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        println!("{:?}", alive_ports)
+    let mut out: Vec<u16> = vec![];
+    drop(tx);
+
+    for port in rx {
+        out.push(port)
+    }
+
+    out.sort();
+    sp.stop();
+    //Empty space to split loader from output
+    println!("\n");
+
+    if out.is_empty() {
+        println!("Couldn't find any open port ")
+    } else {
+        for v in out {
+            println!("{} is open", v)
+        }
     }
 }
 
-fn check_if_port_is_alive(host: IpAddr, port: u16) -> Result<(), ()> {
-    let timeout = Duration::from_millis(100);
-
-    match TcpStream::connect_timeout(&SocketAddr::new(host, port), timeout) {
-        Ok(mut stream) => {
-            //Pinging the server
-            let msg = "Ping";
-            stream.write(msg.as_bytes()).unwrap();
-
-            let mut buffer = [0; 1024];
-            match stream.read(&mut buffer) {
-                Ok(_) => Ok(()),
-                Err(_) => Err(()),
-            }
+async fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr) {
+    match TcpStream::connect_timeout(
+        &SocketAddr::new(addr, start_port),
+        Duration::from_millis(400),
+    ) {
+        Ok(_) => {
+            io::stdout().flush().unwrap();
+            tx.send(start_port).unwrap()
         }
-        Err(_) => Err(()),
+        // If the connection is unsuccessful, do nothing. Means port is not open.
+        Err(_) => {}
     }
 }
