@@ -21,23 +21,29 @@ async fn main() {
             start_port,
             end_port,
         } => {
-            for port in start_port..end_port {
-                let tx = tx.clone();
+            for addr in target {
+                for port in start_port..end_port {
+                    let tx: Sender<(IpAddr, u16)> = tx.clone();
 
-                task::spawn(async move { scan(tx, port, target).await });
+                    task::spawn(async move { scan(tx, port, addr).await });
+                }
             }
         }
         cli_parser::ParseCliOutput::WithTarget { target, port } => {
             let tx = tx.clone();
-            scan(tx, port, target).await
+            for addr in target {
+                let tx: Sender<(IpAddr, u16)> = tx.clone();
+
+                task::spawn(async move { scan(tx, port, addr).await });
+            }
         }
     }
 
-    let mut out: Vec<u16> = vec![];
+    let mut out: Vec<String> = vec![];
     drop(tx);
 
-    for port in rx {
-        out.push(port)
+    for (ip_addr, u16) in rx {
+        out.push(format!("{}:{}", ip_addr, u16))
     }
 
     out.sort();
@@ -54,14 +60,14 @@ async fn main() {
     }
 }
 
-async fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr) {
+async fn scan(tx: Sender<(IpAddr, u16)>, start_port: u16, addr: IpAddr) {
     match TcpStream::connect_timeout(
         &SocketAddr::new(addr, start_port),
         Duration::from_millis(400),
     ) {
         Ok(_) => {
             io::stdout().flush().unwrap();
-            tx.send(start_port).unwrap()
+            tx.send((addr, start_port)).unwrap()
         }
         // If the connection is unsuccessful, do nothing. Means port is not open.
         Err(_) => {}

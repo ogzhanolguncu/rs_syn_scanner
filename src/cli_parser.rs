@@ -7,8 +7,8 @@ const MAX: u16 = 65535;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Target host
-    #[arg(short, long, default_value_t = String::from("127.0.0.1"))]
-    target: String,
+    #[arg(short, long, value_delimiter = ',')]
+    target: Vec<IpAddr>,
 
     /// Target port
     #[arg(short, long)]
@@ -25,22 +25,23 @@ struct Args {
 
 pub enum ParseCliOutput {
     WithRange {
-        target: IpAddr,
+        target: Vec<IpAddr>,
         start_port: u16,
         end_port: u16,
     },
     WithTarget {
-        target: IpAddr,
+        target: Vec<IpAddr>,
         port: u16,
     },
 }
 
 pub fn parse_cli() -> ParseCliOutput {
     let args: Args = Args::parse();
-    let addr = args
-        .target
-        .parse::<IpAddr>()
-        .expect("You must give an address!");
+    let addr = args.target;
+
+    if addr.is_empty() {
+        panic!("You must at least give one valid address!")
+    }
 
     let start_port = args.start_port;
     let end_port = args.end_port;
